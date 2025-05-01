@@ -4,41 +4,71 @@ import { supabase } from '../config/supabase';
 export default function QrPage() {
   const [qr, setQr] = useState(null);
   const [status, setStatus] = useState('Carregando...');
+  const [loadingInit, setLoadingInit] = useState(false);
+  const [loadingDisconnect, setLoadingDisconnect] = useState(false);
+  const [loadingReconnect, setLoadingReconnect] = useState(false);
+  const [response, setResponse] = useState(null);
 
+  const clientId = 'whats-track-1';
+  const API_URL = 'http://localhost:3001/api/whatsapp';
+
+  // Ações POST genéricas
+  const callAction = async (endpoint, setLoading) => {
+    setLoading(true);
+    setResponse(null);
+
+    try {
+      const res = await fetch(`${API_URL}/${endpoint}`, { method: 'POST' });
+      const data = await res.json();
+
+      if (res.ok) {
+        setResponse({ type: 'success', message: data.message || 'Ação executada' });
+      } else {
+        setResponse({ type: 'error', message: data.error || 'Erro na ação' });
+      }
+    } catch (err) {
+      setResponse({ type: 'error', message: `Erro ao chamar /${endpoint}` });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInit = () => callAction('init', setLoadingInit);
+  const handleDisconnect = () => callAction('disconnect', setLoadingDisconnect);
+  const handleReconnect = () => callAction('reconnect', setLoadingReconnect);
+
+  // Fetch inicial: status + QR
   useEffect(() => {
-    const clientId = 'whats-track-1';
-
-    // Função para buscar o status e QR Code atuais
     const fetchInitialData = async () => {
       try {
-        // Buscar status atual
-        const { data: statusData, error: statusError } = await supabase
+        const { data: statusData } = await supabase
           .from('whatsapp_status')
           .select('status')
           .eq('client_id', clientId)
           .maybeSingle();
 
-        if (statusError) throw statusError;
-        if (statusData?.status) setStatus(statusData.status);
+        if (statusData?.status) {
+          setStatus(statusData.status);
+        }
 
-        // Buscar QR Code atual
-        const { data: qrData, error: qrError } = await supabase
+        const { data: qrData } = await supabase
           .from('qr_codes')
           .select('code_base64')
           .eq('client_id', clientId)
           .maybeSingle();
 
-        if (qrError) throw qrError;
-        if (qrData?.code_base64) setQr(qrData.code_base64);
-      } catch (error) {
-        console.error('Erro ao buscar dados iniciais:', error.message);
-        setStatus('Erro ao carregar dados.');
+        if (qrData?.code_base64) {
+          setQr(qrData.code_base64);
+        }
+      } catch (err) {
+        console.error('Erro ao carregar dados iniciais:', err.message);
+        setStatus('Erro ao carregar');
       }
     };
 
     fetchInitialData();
 
-    // Canal Realtime para atualizações de status
+    // Realtime para status
     const statusChannel = supabase
       .channel('realtime:whatsapp_status')
       .on(
@@ -47,7 +77,7 @@ export default function QrPage() {
           event: '*',
           schema: 'public',
           table: 'whatsapp_status',
-          filter: `client_id=eq.${clientId}`,
+          filter: `client_id=eq.${clientId}`
         },
         (payload) => {
           setStatus(payload.new.status);
@@ -55,7 +85,7 @@ export default function QrPage() {
       )
       .subscribe();
 
-    // Canal Realtime para atualizações de QR Code
+    // Realtime para QR
     const qrChannel = supabase
       .channel('realtime:qr_codes')
       .on(
@@ -64,7 +94,7 @@ export default function QrPage() {
           event: '*',
           schema: 'public',
           table: 'qr_codes',
-          filter: `client_id=eq.${clientId}`,
+          filter: `client_id=eq.${clientId}`
         },
         (payload) => {
           setQr(payload.new.code_base64);
@@ -72,7 +102,6 @@ export default function QrPage() {
       )
       .subscribe();
 
-    // Cleanup dos canais ao desmontar o componente
     return () => {
       supabase.removeChannel(statusChannel);
       supabase.removeChannel(qrChannel);
@@ -94,6 +123,33 @@ export default function QrPage() {
       {status === 'ready' && (
         <p style={{ color: 'green', fontWeight: 'bold', marginTop: 20 }}>
           ✅ WhatsApp conectado com sucesso!
+        </p>
+      )}
+
+      {/* Botões condicionais */}
+      <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+        {status !== 'ready' && (
+          <button onClick={handleInit} disabled={loadingInit}>
+            {loadingInit ? 'Iniciando...' : 'Gerar QR Code'}
+          </button>
+        )}
+
+        {status === 'ready' && (
+          <>
+            <button onClick={handleDisconnect} disabled={loadingDisconnect}>
+              {loadingDisconnect ? 'Desconectando...' : 'Desconectar'}
+            </button>
+
+            <button onClick={handleReconnect} disabled={loadingReconnect}>
+              {loadingReconnect ? 'Reconectando...' : 'Reconectar'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {response && (
+        <p style={{ marginTop: 15, color: response.type === 'success' ? 'green' : 'red' }}>
+          {response.message}
         </p>
       )}
     </div>
